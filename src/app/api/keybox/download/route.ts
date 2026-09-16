@@ -24,6 +24,19 @@ export async function GET(request: Request) {
     const now = new Date();
     const expiresAt = new Date(keybox.expires_at);
     if (expiresAt.getTime() <= now.getTime()) {
+      // Clean up file and database record immediately upon expired download attempt
+      try {
+        const rawJson = keybox.content.startsWith('__KEYBOX_DOCUMENT__:')
+          ? keybox.content.replace('__KEYBOX_DOCUMENT__:', '')
+          : keybox.content;
+        const expiredMeta = JSON.parse(rawJson);
+        if (expiredMeta?.storagePath) {
+          await supabaseServer.storage.from(DOCUMENTS_BUCKET).remove([expiredMeta.storagePath]);
+        }
+        await supabaseServer.from('keyboxes').delete().eq('id', keybox.id);
+      } catch (cleanupErr) {
+        console.error('Error cleaning up expired document on download attempt:', cleanupErr);
+      }
       return NextResponse.json({ error: 'This KeyBox has expired.' }, { status: 410 });
     }
 
