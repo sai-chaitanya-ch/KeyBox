@@ -23,6 +23,7 @@ interface DocumentData {
   fileSize: number;
   fileType: string;
   downloadUrl: string;
+  previewUrl?: string;
 }
 
 interface KeyBoxData {
@@ -133,7 +134,7 @@ export default function RetrieveKeyBox() {
 
   const handleCopyContent = async () => {
     if (!keyboxData) return;
-    const textToCopy = keyboxData.document?.downloadUrl || keyboxData.content;
+    const textToCopy = keyboxData.content;
     try {
       if (navigator.clipboard && navigator.clipboard.writeText) {
         await navigator.clipboard.writeText(textToCopy);
@@ -313,9 +314,9 @@ export default function RetrieveKeyBox() {
                       </a>
                     )}
 
-                    {keyboxData.document?.downloadUrl && isPreviewable(keyboxData.document.fileName) && (
+                    {keyboxData.document && isPreviewable(keyboxData.document.fileName) && (
                       <a
-                        href={keyboxData.document.downloadUrl}
+                        href={keyboxData.document.previewUrl || keyboxData.document.downloadUrl}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-zinc-200 hover:border-zinc-300 dark:border-zinc-800 dark:hover:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-800 dark:text-zinc-200 text-sm font-semibold transition-colors"
@@ -323,16 +324,6 @@ export default function RetrieveKeyBox() {
                         <ExternalLink className="w-4 h-4" />
                         <span>Preview</span>
                       </a>
-                    )}
-
-                    {keyboxData.document?.downloadUrl && (
-                      <button
-                        onClick={handleCopyContent}
-                        className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-zinc-200 hover:border-zinc-300 dark:border-zinc-800 dark:hover:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 text-sm font-medium transition-colors"
-                      >
-                        {copied ? <Check className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4" />}
-                        <span>{copied ? 'Link Copied!' : 'Copy Link'}</span>
-                      </button>
                     )}
                   </div>
                 </div>

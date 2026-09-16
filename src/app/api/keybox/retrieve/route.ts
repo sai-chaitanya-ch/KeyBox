@@ -141,15 +141,8 @@ export async function POST(request: Request) {
       .delete()
       .eq('ip_hash', ipHash);
 
-    // If document, generate a signed download URL valid for the remaining duration
+    // If document, return secure internal download endpoints (no external storage buckets or tokens exposed)
     if (isDoc && docMeta) {
-      const remainingSeconds = Math.max(1, Math.floor((expiresAt.getTime() - now.getTime()) / 1000));
-      const { data: signedUrlData } = await supabaseServer.storage
-        .from(DOCUMENTS_BUCKET)
-        .createSignedUrl(docMeta.storagePath, remainingSeconds, {
-          download: docMeta.fileName,
-        });
-
       return NextResponse.json({
         content: docMeta.fileName,
         content_type: 'document',
@@ -158,7 +151,8 @@ export async function POST(request: Request) {
           fileName: docMeta.fileName,
           fileSize: docMeta.fileSize,
           fileType: docMeta.fileType,
-          downloadUrl: signedUrlData?.signedUrl || '',
+          downloadUrl: `/api/keybox/download?key=${access_key}`,
+          previewUrl: `/api/keybox/download?key=${access_key}&preview=1`,
         },
       });
     }
