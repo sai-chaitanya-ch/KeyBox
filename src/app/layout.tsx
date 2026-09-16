@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "KeyBox — Share. Lock. Unlock.",
-  description: "Share temporary text, URL, or code containers with a simple 6-digit access key. Anonymous and secure.",
+  description: "Share temporary text, URL, code, or documents with a simple 6-digit access key. Anonymous and secure.",
 };
 
 export const viewport: Viewport = {

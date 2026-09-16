@@ -15,3 +15,28 @@ export const supabaseServer = createClient(supabaseUrl, supabaseServiceKey, {
     autoRefreshToken: false,
   },
 });
+
+export const DOCUMENTS_BUCKET = 'documents';
+
+let bucketEnsured = false;
+export async function ensureDocumentsBucket() {
+  if (bucketEnsured) return;
+  try {
+    const { data: buckets } = await supabaseServer.storage.listBuckets();
+    const exists = buckets?.some((b) => b.name === DOCUMENTS_BUCKET);
+    if (!exists) {
+      await supabaseServer.storage.createBucket(DOCUMENTS_BUCKET, {
+        public: true,
+        fileSizeLimit: 5242880, // 5MB; application validation requires files to be smaller
+      });
+    } else {
+      await supabaseServer.storage.updateBucket(DOCUMENTS_BUCKET, {
+        public: true,
+        fileSizeLimit: 5242880,
+      });
+    }
+    bucketEnsured = true;
+  } catch (err) {
+    console.error('Failed to ensure documents storage bucket:', err);
+  }
+}

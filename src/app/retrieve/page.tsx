@@ -2,12 +2,47 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, KeyRound, Copy, Check, ExternalLink, Clock, FileText, Globe, Code } from 'lucide-react';
+import {
+  ArrowLeft,
+  KeyRound,
+  Copy,
+  Check,
+  ExternalLink,
+  Clock,
+  FileText,
+  Globe,
+  Code,
+  Download,
+  FileSpreadsheet,
+  FileCode,
+  File
+} from 'lucide-react';
+
+interface DocumentData {
+  fileName: string;
+  fileSize: number;
+  fileType: string;
+  downloadUrl: string;
+}
 
 interface KeyBoxData {
   content: string;
-  content_type: 'text' | 'url' | 'code';
+  content_type: 'text' | 'url' | 'code' | 'document';
   expires_at: string;
+  document?: DocumentData;
+}
+
+function formatFileSize(bytes?: number): string {
+  if (!bytes && bytes !== 0) return 'Unknown size';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function getFileExtension(filename?: string): string {
+  if (!filename) return '';
+  const match = filename.lastIndexOf('.');
+  return match !== -1 ? filename.substring(match).toLowerCase() : '';
 }
 
 export default function RetrieveKeyBox() {
@@ -77,9 +112,15 @@ export default function RetrieveKeyBox() {
         return;
       }
 
-      const minutes = Math.floor(diff / 60000);
+      const hours = Math.floor(diff / 3600000);
+      const minutes = Math.floor((diff % 3600000) / 60000);
       const seconds = Math.floor((diff % 60000) / 1000);
-      setTimeLeft(`${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`);
+
+      if (hours > 0) {
+        setTimeLeft(`${hours}h ${minutes.toString().padStart(2, '0')}m ${seconds.toString().padStart(2, '0')}s`);
+      } else {
+        setTimeLeft(`${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`);
+      }
     };
 
     updateCountdown();
@@ -92,13 +133,14 @@ export default function RetrieveKeyBox() {
 
   const handleCopyContent = async () => {
     if (!keyboxData) return;
+    const textToCopy = keyboxData.document?.downloadUrl || keyboxData.content;
     try {
       if (navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(keyboxData.content);
+        await navigator.clipboard.writeText(textToCopy);
         setCopied(true);
       } else {
         const textArea = document.createElement('textarea');
-        textArea.value = keyboxData.content;
+        textArea.value = textToCopy;
         textArea.style.position = 'fixed';
         document.body.appendChild(textArea);
         textArea.focus();
@@ -119,6 +161,28 @@ export default function RetrieveKeyBox() {
     setKeyboxData(null);
     setError(null);
     setTimeLeft('');
+  };
+
+  const renderFileIcon = (fileName?: string) => {
+    const ext = getFileExtension(fileName);
+    if (ext === '.pdf') {
+      return <FileText className="w-10 h-10 text-rose-500" />;
+    }
+    if (['.xls', '.xlsx', '.csv'].includes(ext)) {
+      return <FileSpreadsheet className="w-10 h-10 text-emerald-500" />;
+    }
+    if (['.doc', '.docx'].includes(ext)) {
+      return <FileText className="w-10 h-10 text-blue-500" />;
+    }
+    if (['.txt', '.md', '.rtf'].includes(ext)) {
+      return <FileCode className="w-10 h-10 text-amber-500" />;
+    }
+    return <File className="w-10 h-10 text-zinc-500" />;
+  };
+
+  const isPreviewable = (fileName?: string) => {
+    const ext = getFileExtension(fileName);
+    return ['.pdf', '.txt', '.csv', '.md'].includes(ext);
   };
 
   return (
@@ -195,6 +259,7 @@ export default function RetrieveKeyBox() {
                   {keyboxData.content_type === 'text' && <FileText className="w-4.5 h-4.5" />}
                   {keyboxData.content_type === 'url' && <Globe className="w-4.5 h-4.5" />}
                   {keyboxData.content_type === 'code' && <Code className="w-4.5 h-4.5" />}
+                  {keyboxData.content_type === 'document' && <FileText className="w-4.5 h-4.5" />}
                 </div>
                 <div>
                   <div className="text-xs text-zinc-400 dark:text-zinc-500 uppercase tracking-widest font-bold">
@@ -216,7 +281,62 @@ export default function RetrieveKeyBox() {
 
             {/* Content box */}
             <div className="relative border border-zinc-200 dark:border-zinc-800 rounded-xl bg-white dark:bg-zinc-950 overflow-hidden shadow-sm">
-              {keyboxData.content_type === 'url' ? (
+              {keyboxData.content_type === 'document' ? (
+                /* Document Viewer */
+                <div className="p-8 flex flex-col items-center justify-center text-center min-h-[240px]">
+                  <div className="mb-4 p-4 rounded-2xl bg-zinc-100 dark:bg-zinc-900/80 border border-zinc-200/50 dark:border-zinc-800/50">
+                    {renderFileIcon(keyboxData.document?.fileName || keyboxData.content)}
+                  </div>
+                  
+                  <h2 className="text-lg font-bold text-zinc-900 dark:text-zinc-50 max-w-md break-all">
+                    {keyboxData.document?.fileName || keyboxData.content}
+                  </h2>
+
+                  <div className="flex items-center gap-2 mt-2 mb-6">
+                    <span className="text-xs uppercase font-mono px-2 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 font-semibold">
+                      {getFileExtension(keyboxData.document?.fileName || keyboxData.content).replace('.', '') || 'DOC'}
+                    </span>
+                    <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
+                      {formatFileSize(keyboxData.document?.fileSize)}
+                    </span>
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-center gap-3">
+                    {keyboxData.document?.downloadUrl && (
+                      <a
+                        href={keyboxData.document.downloadUrl}
+                        download={keyboxData.document.fileName}
+                        className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-zinc-950 hover:bg-zinc-800 dark:bg-zinc-50 dark:hover:bg-zinc-200 text-white dark:text-zinc-950 text-sm font-semibold transition-colors shadow-sm"
+                      >
+                        <Download className="w-4 h-4" />
+                        <span>Download Document</span>
+                      </a>
+                    )}
+
+                    {keyboxData.document?.downloadUrl && isPreviewable(keyboxData.document.fileName) && (
+                      <a
+                        href={keyboxData.document.downloadUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-zinc-200 hover:border-zinc-300 dark:border-zinc-800 dark:hover:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-800 dark:text-zinc-200 text-sm font-semibold transition-colors"
+                      >
+                        <ExternalLink className="w-4 h-4" />
+                        <span>Preview</span>
+                      </a>
+                    )}
+
+                    {keyboxData.document?.downloadUrl && (
+                      <button
+                        onClick={handleCopyContent}
+                        className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-zinc-200 hover:border-zinc-300 dark:border-zinc-800 dark:hover:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 text-sm font-medium transition-colors"
+                      >
+                        {copied ? <Check className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4" />}
+                        <span>{copied ? 'Link Copied!' : 'Copy Link'}</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ) : keyboxData.content_type === 'url' ? (
                 /* URL Viewer */
                 <div className="p-8 text-center flex flex-col items-center justify-center min-h-[200px]">
                   <Globe className="w-12 h-12 text-zinc-300 dark:text-zinc-700 mb-4" />

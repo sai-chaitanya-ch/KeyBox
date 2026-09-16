@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createHash } from 'crypto';
-import { supabaseServer } from '@/lib/supabase';
+import { supabaseServer, DOCUMENTS_BUCKET } from '@/lib/supabase';
 
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCKOUT_PERIOD_MS = 15 * 60 * 1000; // 15 minutes
@@ -103,9 +103,28 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'KeyBox not found.' }, { status: 404 });
     }
 
+    // Helper to check and extract document metadata
+    const isDoc = keybox.content_type === 'document' || (keybox.content_type === 'text' && keybox.content.startsWith('__KEYBOX_DOCUMENT__:'));
+    let docMeta: { fileName: string; fileSize: number; fileType: string; storagePath: string } | null = null;
+    if (isDoc) {
+      try {
+        const rawJson = keybox.content.startsWith('__KEYBOX_DOCUMENT__:')
+          ? keybox.content.replace('__KEYBOX_DOCUMENT__:', '')
+          : keybox.content;
+        docMeta = JSON.parse(rawJson);
+      } catch (e) {
+        console.error('Failed to parse document metadata:', e);
+      }
+    }
+
     // 4. Check expiration using server time
     const expiresAt = new Date(keybox.expires_at);
     if (expiresAt.getTime() <= now.getTime()) {
+      // If it was a document, clean up the file from Supabase Storage
+      if (docMeta?.storagePath) {
+        await supabaseServer.storage.from(DOCUMENTS_BUCKET).remove([docMeta.storagePath]).catch(() => {});
+      }
+
       // Expired! Delete the record
       await supabaseServer
         .from('keyboxes')
@@ -121,6 +140,28 @@ export async function POST(request: Request) {
       .from('failed_attempts')
       .delete()
       .eq('ip_hash', ipHash);
+
+    // If document, generate a signed download URL valid for the remaining duration
+    if (isDoc && docMeta) {
+      const remainingSeconds = Math.max(1, Math.floor((expiresAt.getTime() - now.getTime()) / 1000));
+      const { data: signedUrlData } = await supabaseServer.storage
+        .from(DOCUMENTS_BUCKET)
+        .createSignedUrl(docMeta.storagePath, remainingSeconds, {
+          download: docMeta.fileName,
+        });
+
+      return NextResponse.json({
+        content: docMeta.fileName,
+        content_type: 'document',
+        expires_at: keybox.expires_at,
+        document: {
+          fileName: docMeta.fileName,
+          fileSize: docMeta.fileSize,
+          fileType: docMeta.fileType,
+          downloadUrl: signedUrlData?.signedUrl || '',
+        },
+      });
+    }
 
     // Return only required fields (exclude database id or other details)
     return NextResponse.json({
