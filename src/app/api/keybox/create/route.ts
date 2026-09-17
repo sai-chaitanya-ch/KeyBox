@@ -33,6 +33,9 @@ function sanitizeFileName(name: string): string {
   return baseName.replace(/[^a-zA-Z0-9._-]/g, '_');
 }
 
+// Module-level cache to avoid repeated failed inserts if DB check constraint is not updated yet
+let dbSupportsDocumentContentType: boolean | null = null;
+
 export async function POST(request: Request) {
   try {
     const contentTypeHeader = request.headers.get('content-type') || '';
@@ -42,6 +45,7 @@ export async function POST(request: Request) {
     let contentType: ContentType = 'text';
     let durationNum: number = 30;
     let documentFile: File | null = null;
+    let fileBuffer: Buffer | null = null;
     let documentStoragePath = '';
 
     if (isMultipart) {
@@ -71,6 +75,7 @@ export async function POST(request: Request) {
       contentType = rawContentType as ContentType;
       durationNum = Number(rawDuration);
       documentFile = file;
+      fileBuffer = Buffer.from(await documentFile.arrayBuffer());
     } else {
       const body = await request.json();
       const { content, content_type, duration } = body;
@@ -113,30 +118,36 @@ export async function POST(request: Request) {
     let attempts = 0;
     const maxAttempts = 10;
 
-    // Ensure documents storage bucket exists if uploading a document
-    if (documentFile) {
-      await ensureDocumentsBucket();
-    }
-
     while (!inserted && attempts < maxAttempts) {
       attempts++;
       accessKey = randomInt(100000, 1000000).toString();
-      
+
       const now = new Date();
       expiresAt = new Date(now.getTime() + durationNum * 60 * 1000);
 
       // If document, upload file to Supabase Storage first
-      if (documentFile) {
+      if (documentFile && fileBuffer) {
         const sanitized = sanitizeFileName(documentFile.name);
         documentStoragePath = `${accessKey}/${sanitized}`;
-        const fileBuffer = Buffer.from(await documentFile.arrayBuffer());
 
-        const { error: uploadError } = await supabaseServer.storage
+        let { error: uploadError } = await supabaseServer.storage
           .from(DOCUMENTS_BUCKET)
           .upload(documentStoragePath, fileBuffer, {
             contentType: documentFile.type || 'application/octet-stream',
             upsert: true,
           });
+
+        // If bucket does not exist (first time only), ensure and retry
+        if (uploadError && (uploadError.message?.toLowerCase().includes('bucket') || (uploadError as unknown as { statusCode?: string | number }).statusCode === '404' || (uploadError as unknown as { statusCode?: string | number }).statusCode === 404)) {
+          await ensureDocumentsBucket();
+          const retry = await supabaseServer.storage
+            .from(DOCUMENTS_BUCKET)
+            .upload(documentStoragePath, fileBuffer, {
+              contentType: documentFile.type || 'application/octet-stream',
+              upsert: true,
+            });
+          uploadError = retry.error;
+        }
 
         if (uploadError) {
           console.error('Document storage upload error:', uploadError);
@@ -152,19 +163,23 @@ export async function POST(request: Request) {
         contentStr = JSON.stringify(metadata);
       }
 
-      // Try inserting with content_type 'document'
+      const useFallbackContentType = contentType === 'document' && dbSupportsDocumentContentType === false;
+      const targetContentType = useFallbackContentType ? 'text' : contentType;
+      const targetContent = useFallbackContentType ? `__KEYBOX_DOCUMENT__:${contentStr}` : contentStr;
+
       let { error: insertError } = await supabaseServer
         .from('keyboxes')
         .insert({
           access_key: accessKey,
-          content_type: contentType,
-          content: contentStr,
+          content_type: targetContentType,
+          content: targetContent,
           expires_at: expiresAt.toISOString(),
         });
 
       // If check constraint fails because database hasn't had the migration applied yet,
-      // fallback to storing as 'text' with '__KEYBOX_DOCUMENT__:' prefix
+      // fallback to storing as 'text' with '__KEYBOX_DOCUMENT__:' prefix and cache this state
       if (insertError && insertError.code === '23514' && contentType === 'document') {
+        dbSupportsDocumentContentType = false;
         const fallbackContent = `__KEYBOX_DOCUMENT__:${contentStr}`;
         const fallbackRes = await supabaseServer
           .from('keyboxes')
@@ -175,6 +190,8 @@ export async function POST(request: Request) {
             expires_at: expiresAt.toISOString(),
           });
         insertError = fallbackRes.error;
+      } else if (!insertError && contentType === 'document' && dbSupportsDocumentContentType === null) {
+        dbSupportsDocumentContentType = true;
       }
 
       if (!insertError) {

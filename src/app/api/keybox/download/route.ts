@@ -57,6 +57,23 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'Invalid document metadata.' }, { status: 500 });
     }
 
+    // Generate a secure, short-lived (60-second) signed URL to download directly from Supabase CDN
+    const { data: signedUrlData, error: signedUrlError } = await supabaseServer.storage
+      .from(DOCUMENTS_BUCKET)
+      .createSignedUrl(meta.storagePath, 60, {
+        download: isPreview ? false : (meta.fileName || true),
+      });
+
+    if (!signedUrlError && signedUrlData?.signedUrl) {
+      return NextResponse.redirect(signedUrlData.signedUrl, {
+        status: 307,
+        headers: {
+          'Cache-Control': 'private, no-cache, no-store, must-revalidate',
+        },
+      });
+    }
+
+    // Fallback: stream download from server if signed URL creation failed
     const { data: blob, error: dlError } = await supabaseServer.storage
       .from(DOCUMENTS_BUCKET)
       .download(meta.storagePath);

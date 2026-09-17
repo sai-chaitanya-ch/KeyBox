@@ -565,7 +565,7 @@ export default function CreateKeyBox() {
             disabled={isSubmitting}
             className="w-full flex items-center justify-center py-3.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white dark:bg-zinc-50 dark:hover:bg-zinc-200 dark:text-zinc-900 font-semibold shadow transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {isSubmitting ? 'Creating...' : 'Create KeyBox'}
+            {isSubmitting ? (contentType === 'document' ? 'Uploading Document...' : 'Creating...') : 'Create KeyBox'}
           </button>
         </form>
       </main>

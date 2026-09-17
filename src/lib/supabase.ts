@@ -22,21 +22,15 @@ let bucketEnsured = false;
 export async function ensureDocumentsBucket() {
   if (bucketEnsured) return;
   try {
-    const { data: buckets } = await supabaseServer.storage.listBuckets();
-    const exists = buckets?.some((b) => b.name === DOCUMENTS_BUCKET);
-    if (!exists) {
-      await supabaseServer.storage.createBucket(DOCUMENTS_BUCKET, {
-        public: true,
-        fileSizeLimit: 5242880, // 5MB; application validation requires files to be smaller
-      });
-    } else {
-      await supabaseServer.storage.updateBucket(DOCUMENTS_BUCKET, {
-        public: true,
-        fileSizeLimit: 5242880,
-      });
-    }
+    // Attempt to create bucket if it doesn't already exist.
+    // Kept private so all file access requires key verification via short-lived signed URLs.
+    await supabaseServer.storage.createBucket(DOCUMENTS_BUCKET, {
+      public: false,
+      fileSizeLimit: 5242880, // 5MB
+    });
     bucketEnsured = true;
-  } catch (err) {
-    console.error('Failed to ensure documents storage bucket:', err);
+  } catch {
+    // Bucket already exists or created by another worker
+    bucketEnsured = true;
   }
 }

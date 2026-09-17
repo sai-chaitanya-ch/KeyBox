@@ -27,15 +27,38 @@ export async function POST(request: Request) {
     // Get client IP and hash it for privacy
     const ip = getClientIp(request);
     const ipHash = createHash('sha256').update(ip).digest('hex');
-
-    // 1. Check rate limiting (failed attempts)
-    const { data: attemptRecord } = await supabaseServer
-      .from('failed_attempts')
-      .select('attempts, last_attempt')
-      .eq('ip_hash', ipHash)
-      .maybeSingle();
-
     const now = new Date();
+
+    // 1. Fast format validation first (reject malformed input immediately)
+    const isValidKeyFormat = typeof access_key === 'string' && /^\d{6}$/.test(access_key);
+
+    if (!isValidKeyFormat) {
+      // Register failed attempt for malformed requests
+      await supabaseServer
+        .from('failed_attempts')
+        .upsert({
+          ip_hash: ipHash,
+          attempts: 1,
+          last_attempt: now.toISOString(),
+        });
+      return NextResponse.json({ error: 'KeyBox not found.' }, { status: 404 });
+    }
+
+    // 2. Fetch rate-limit status and keybox record concurrently in a single roundtrip
+    const [rateLimitResult, keyboxResult] = await Promise.all([
+      supabaseServer
+        .from('failed_attempts')
+        .select('attempts, last_attempt')
+        .eq('ip_hash', ipHash)
+        .maybeSingle(),
+      supabaseServer
+        .from('keyboxes')
+        .select('id, content, content_type, expires_at')
+        .eq('access_key', access_key)
+        .maybeSingle(),
+    ]);
+
+    const attemptRecord = rateLimitResult.data;
     let currentAttempts = 0;
     let isLocked = false;
 
@@ -49,12 +72,16 @@ export async function POST(request: Request) {
           isLocked = true;
         }
       } else {
-        // Reset count if the lockout period has passed
+        // Reset count if the lockout period has passed (cleanup in background)
         currentAttempts = 0;
-        await supabaseServer
+        supabaseServer
           .from('failed_attempts')
           .delete()
-          .eq('ip_hash', ipHash);
+          .eq('ip_hash', ipHash)
+          .then(
+            () => {},
+            (err: unknown) => console.error('Failed to reset attempts:', err)
+          );
       }
     }
 
@@ -77,18 +104,7 @@ export async function POST(request: Request) {
         });
     };
 
-    // 2. Validate that the supplied key consists of exactly six digits
-    if (!access_key || typeof access_key !== 'string' || !/^\d{6}$/.test(access_key)) {
-      await registerFailedAttempt();
-      return NextResponse.json({ error: 'KeyBox not found.' }, { status: 404 });
-    }
-
-    // 3. Look up the record server-side
-    const { data: keybox, error: dbError } = await supabaseServer
-      .from('keyboxes')
-      .select('id, content, content_type, expires_at')
-      .eq('access_key', access_key)
-      .maybeSingle();
+    const { data: keybox, error: dbError } = keyboxResult;
 
     if (dbError) {
       console.error('Database retrieval error:', dbError);
@@ -122,7 +138,7 @@ export async function POST(request: Request) {
     if (expiresAt.getTime() <= now.getTime()) {
       // If it was a document, clean up the file from Supabase Storage
       if (docMeta?.storagePath) {
-        await supabaseServer.storage.from(DOCUMENTS_BUCKET).remove([docMeta.storagePath]).catch(() => {});
+        supabaseServer.storage.from(DOCUMENTS_BUCKET).remove([docMeta.storagePath]).catch(() => {});
       }
 
       // Expired! Delete the record
@@ -135,11 +151,17 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'This KeyBox has expired.' }, { status: 410 });
     }
 
-    // 5. Successful lookup: Reset failed attempts for this client IP
-    await supabaseServer
-      .from('failed_attempts')
-      .delete()
-      .eq('ip_hash', ipHash);
+    // 5. Successful lookup: Only delete failed attempts record IF one existed
+    if (currentAttempts > 0) {
+      supabaseServer
+        .from('failed_attempts')
+        .delete()
+        .eq('ip_hash', ipHash)
+        .then(
+          () => {},
+          (err: unknown) => console.error('Failed to clear failed attempts:', err)
+        );
+    }
 
     // If document, return secure internal download endpoints (no external storage buckets or tokens exposed)
     if (isDoc && docMeta) {
